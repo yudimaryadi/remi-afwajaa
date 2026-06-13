@@ -48,12 +48,17 @@ function RekapModal({history,onBack,onReset}){
   );
 }
 
-function UndoModal({games,playerNames,onUndo,onClose}){
+function UndoModal({games,playerNames,onUndo,onRemoveCut,onClose}){
   const entries=[];
   games.forEach((g,gIdx)=>{
     playerNames.forEach((name,pIdx)=>{
       const val=g.cells[pIdx];
-      if(val!==null&&val!==undefined) entries.push({gIdx,pIdx,name,val});
+      if(val!==null&&val!==undefined) entries.push({type:"poin",gIdx,pIdx,name,val});
+    });
+    playerNames.forEach((name,pIdx)=>{
+      (g.cuts?.[pIdx]||[]).forEach((cutVal,cutIdx)=>{
+        entries.push({type:"cut",gIdx,pIdx,name,val:cutVal,cutIdx});
+      });
     });
   });
   const recent=[...entries].reverse().slice(0,12);
@@ -68,13 +73,19 @@ function UndoModal({games,playerNames,onUndo,onClose}){
         {recent.map((r,i)=>(
           <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",marginBottom:8,borderRadius:10,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontSize:18}}>{r.val<0?"📉":"📈"}</span>
+              <span style={{fontSize:18}}>{r.type==="cut"?"✂":"" }{r.val<0?"📉":"📈"}</span>
               <div>
-                <div style={{color:"#e5e7eb",fontWeight:700,fontSize:14}}>{r.name} <span style={{color:"#6b7280",fontSize:11,fontWeight:400}}>Game #{r.gIdx+1}</span></div>
+                <div style={{color:"#e5e7eb",fontWeight:700,fontSize:14}}>
+                  {r.name} <span style={{color:"#6b7280",fontSize:11,fontWeight:400}}>Game #{r.gIdx+1}</span>
+                  {r.type==="cut"&&<span style={{background:"rgba(220,38,38,0.2)",color:"#f87171",fontSize:9,fontWeight:800,padding:"1px 5px",borderRadius:6,marginLeft:4}}>POTONG</span>}
+                </div>
                 <div style={{fontSize:12,color:r.val<0?"#f87171":"#4ade80",fontFamily:"monospace"}}>{fmt(r.val)}</div>
               </div>
             </div>
-            <button onClick={()=>onUndo(r.gIdx,r.pIdx)} style={{background:"rgba(220,38,38,0.2)",border:"1px solid rgba(220,38,38,0.4)",borderRadius:8,color:"#f87171",padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>HAPUS</button>
+            <button
+              onClick={()=>r.type==="cut"?onRemoveCut(r.gIdx,r.pIdx,r.cutIdx):onUndo(r.gIdx,r.pIdx)}
+              style={{background:"rgba(220,38,38,0.2)",border:"1px solid rgba(220,38,38,0.4)",borderRadius:8,color:"#f87171",padding:"6px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}
+            >HAPUS</button>
           </div>
         ))}
         <button onClick={onClose} style={{width:"100%",marginTop:8,padding:12,borderRadius:10,border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"#9ca3af",fontSize:14,fontWeight:600,cursor:"pointer"}}>Tutup</button>
@@ -83,12 +94,12 @@ function UndoModal({games,playerNames,onUndo,onClose}){
   );
 }
 
-function NumpadModal({title,onConfirm,onClose}){
+function NumpadModal({title,onConfirm,onClose,forceMinus=false}){
   const [display,setDisplay]=useState("");
-  const [negative,setNegative]=useState(false);
+  const [negative,setNegative]=useState(forceMinus);
   const press=(k)=>{
     if(k==="DEL"){setDisplay(d=>d.slice(0,-1));return;}
-    if(k==="+/-"){setNegative(n=>!n);return;}
+    if(k==="+/-"){if(!forceMinus)setNegative(n=>!n);return;}
     if(display.length>=5)return;
     setDisplay(d=>d+k);
   };
@@ -112,8 +123,9 @@ function NumpadModal({title,onConfirm,onClose}){
           {keys.map(k=>{
             const isSpec=k==="DEL"||k==="+/-";
             const isActive=k==="+/-"&&negative;
+            const isDisabled=k==="+/-"&&forceMinus;
             return(
-              <button key={k} onClick={()=>press(k)} style={{padding:"18px 0",borderRadius:12,border:"none",cursor:"pointer",fontFamily:"monospace",fontSize:20,fontWeight:700,background:isActive?"rgba(220,38,38,0.3)":isSpec?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.06)",color:isActive?"#f87171":isSpec?"#9ca3af":"#e5e7eb"}}>
+              <button key={k} onClick={()=>press(k)} style={{padding:"18px 0",borderRadius:12,border:"none",cursor:isDisabled?"not-allowed":"pointer",fontFamily:"monospace",fontSize:20,fontWeight:700,background:isActive?"rgba(220,38,38,0.3)":isSpec?"rgba(255,255,255,0.08)":"rgba(255,255,255,0.06)",color:isDisabled?"#374151":isActive?"#f87171":isSpec?"#9ca3af":"#e5e7eb",opacity:isDisabled?0.3:1}}>
                 {k}
               </button>
             );
@@ -129,11 +141,19 @@ function NumpadModal({title,onConfirm,onClose}){
 }
 
 // ── localStorage helpers ──
-const LS_KEY="remi_tracker_v1";
+const LS_KEY="remi_tracker_v2";
 function loadState(){
   try{
     const raw=localStorage.getItem(LS_KEY);
-    if(!raw)return null;
+    if(!raw){
+      // migrate from v1
+      const old=localStorage.getItem("remi_tracker_v1");
+      if(!old)return null;
+      const parsed=JSON.parse(old);
+      // add cuts field to old games
+      if(parsed?.games) parsed.games=parsed.games.map(g=>({...g,cuts:g.cuts||Array((parsed.playerNames||[]).length).fill(null).map(()=>[])}));
+      return parsed;
+    }
     return JSON.parse(raw);
   }catch(e){return null;}
 }
@@ -150,10 +170,10 @@ export default function App(){
   const [showRekap,setShowRekap]=useState(false);
   const [showUndo,setShowUndo]=useState(false);
   const [numpad,setNumpad]=useState(null);
+  const [cutNumpad,setCutNumpad]=useState(null);
 
   const n=playerNames.length||4;
 
-  // auto-save whenever phase/playerNames/games changes
   useEffect(()=>{
     saveState({phase,names,playerNames,games});
   },[phase,names,playerNames,games]);
@@ -194,14 +214,16 @@ export default function App(){
   };
 
   const openNumpad=(gIdx,pIdx)=>setNumpad({gIdx,pIdx});
+  const openCutNumpad=(gIdx,pIdx)=>setCutNumpad({gIdx,pIdx});
 
   const confirmNumpad=(val)=>{
     if(!numpad)return;
     const {gIdx,pIdx}=numpad;
     setGames(prev=>{
       const next=[...prev];
-      while(next.length<=gIdx) next.push({cells:Array(n).fill(null)});
+      while(next.length<=gIdx) next.push({cells:Array(n).fill(null),cuts:Array(n).fill(null).map(()=>[])});
       const g={...next[gIdx],cells:[...next[gIdx].cells]};
+      if(!g.cuts) g.cuts=Array(n).fill(null).map(()=>[]);
       g.cells[pIdx]=val;
       next[gIdx]=g;
       return next;
@@ -209,13 +231,43 @@ export default function App(){
     setNumpad(null);
   };
 
+  const confirmCutNumpad=(val)=>{
+    if(!cutNumpad)return;
+    const {gIdx,pIdx}=cutNumpad;
+    const cutVal=-Math.abs(val);
+    setGames(prev=>{
+      const next=[...prev];
+      while(next.length<=gIdx) next.push({cells:Array(n).fill(null),cuts:Array(n).fill(null).map(()=>[])});
+      const g={...next[gIdx]};
+      const cuts=g.cuts?g.cuts.map(c=>[...c]):Array(n).fill(null).map(()=>[]);
+      cuts[pIdx]=[...(cuts[pIdx]||[]),cutVal];
+      g.cuts=cuts;
+      next[gIdx]=g;
+      return next;
+    });
+    setCutNumpad(null);
+  };
+
   const undoCell=(gIdx,pIdx)=>{
     setGames(prev=>{
       const next=[...prev];
       const g={...next[gIdx],cells:[...next[gIdx].cells]};
+      if(!g.cuts) g.cuts=Array(n).fill(null).map(()=>[]);
       g.cells[pIdx]=null;
       next[gIdx]=g;
       while(next.length>0&&next[next.length-1].cells.every(c=>c===null||c===undefined)) next.pop();
+      return next;
+    });
+  };
+
+  const removeCut=(gIdx,pIdx,cutIdx)=>{
+    setGames(prev=>{
+      const next=[...prev];
+      const g={...next[gIdx]};
+      const cuts=g.cuts?g.cuts.map(c=>[...c]):Array(n).fill(null).map(()=>[]);
+      cuts[pIdx]=cuts[pIdx].filter((_,i)=>i!==cutIdx);
+      g.cuts=cuts;
+      next[gIdx]=g;
       return next;
     });
   };
@@ -238,8 +290,8 @@ export default function App(){
   const displayRows=games.length>0
     ?(games[games.length-1].cells.every(c=>c===null)
       ?games
-      :[...games,{cells:Array(n).fill(null),_isNew:true}])
-    :[{cells:Array(n).fill(null),_isNew:true}];
+      :[...games,{cells:Array(n).fill(null),cuts:Array(n).fill(null).map(()=>[]),_isNew:true}])
+    :[{cells:Array(n).fill(null),cuts:Array(n).fill(null).map(()=>[]),_isNew:true}];
 
   const rekapHistory=games.map((_,gi)=>({loser:loserAtGame(gi)}));
 
@@ -287,12 +339,20 @@ export default function App(){
       <style>{globalCss}</style>
 
       {showRekap&&<RekapModal history={rekapHistory} onBack={()=>setShowRekap(false)} onReset={confirmReset}/>}
-      {showUndo&&<UndoModal games={games} playerNames={playerNames} onUndo={undoCell} onClose={()=>setShowUndo(false)}/>}
+      {showUndo&&<UndoModal games={games} playerNames={playerNames} onUndo={undoCell} onRemoveCut={removeCut} onClose={()=>setShowUndo(false)}/>}
       {numpad!==null&&(
         <NumpadModal
           title={`${playerNames[numpad.pIdx]} · Game #${numpad.gIdx+1}`}
           onConfirm={confirmNumpad}
           onClose={()=>setNumpad(null)}
+        />
+      )}
+      {cutNumpad!==null&&(
+        <NumpadModal
+          title={`✂ POTONG · ${playerNames[cutNumpad.pIdx]} · Game #${cutNumpad.gIdx+1}`}
+          onConfirm={confirmCutNumpad}
+          onClose={()=>setCutNumpad(null)}
+          forceMinus={true}
         />
       )}
 
@@ -305,7 +365,7 @@ export default function App(){
         </div>
       </div>
 
-      {/* TOTAL BAR — nama + skor total */}
+      {/* TOTAL BAR */}
       <div style={{display:"grid",gridTemplateColumns:`40px repeat(${n},1fr)`,background:"rgba(0,0,0,0.5)",borderBottom:"2px solid rgba(74,222,128,0.12)"}}>
         <div/>
         {playerNames.map((name,pi)=>{
@@ -357,20 +417,56 @@ export default function App(){
                   const isEmpty=val===null||val===undefined;
                   const cumVal=!isNewRow&&!isEmpty?cumulative(gIdx,pi):null;
                   const isSanksi=!isNewRow&&!isEmpty&&loserName===playerNames[pi];
+                  const cuts=g.cuts?.[pi]||[];
                   return(
                     <td key={pi}
-                      onClick={()=>openNumpad(gIdx,pi)}
-                      style={{textAlign:"center",padding:"10px 3px",borderLeft:"1px solid rgba(255,255,255,0.05)",cursor:"pointer",verticalAlign:"middle",background:isEmpty?"transparent":val<0?"rgba(220,38,38,0.06)":"rgba(74,222,128,0.04)"}}
+                      style={{
+                        textAlign:"center",
+                        padding:0,
+                        borderLeft:"1px solid rgba(255,255,255,0.05)",
+                        verticalAlign:"middle",
+                        background:isEmpty?"transparent":val<0?"rgba(220,38,38,0.06)":"rgba(74,222,128,0.04)"
+                      }}
                     >
-                      {isEmpty
-                        ?<span style={{color:"rgba(255,255,255,0.15)",fontSize:18}}>+</span>
-                        :<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
-                          <span style={{fontFamily:"monospace",fontSize:"clamp(12px,3.5vw,16px)",fontWeight:900,color:cumVal>0?"#4ade80":cumVal<0?"#f87171":"#9ca3af"}}>
-                            {fmt(cumVal)}
-                          </span>
-                          {isSanksi&&<span style={{fontSize:12,animation:"blink 1.3s infinite"}}>🍶</span>}
+                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:0}}>
+                        {/* Score area – tap to edit/input poin */}
+                        <div
+                          onClick={()=>openNumpad(gIdx,pi)}
+                          style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3,padding:"6px 3px",width:"100%",cursor:"pointer"}}
+                        >
+                          {isEmpty
+                            ?<span style={{color:"rgba(255,255,255,0.15)",fontSize:18}}>+</span>
+                            :<>
+                              <span style={{fontFamily:"monospace",fontSize:"clamp(12px,3.5vw,16px)",fontWeight:900,color:isSanksi?"#f87171":"#4ade80"}}>
+                                {cumVal===0?"0":`${cumVal}`}
+                              </span>
+                              {isSanksi&&<span style={{fontSize:12,animation:"blink 1.3s infinite"}}>🍶</span>}
+                            </>
+                          }
                         </div>
-                      }
+                        {/* Cut note area – always visible, tap to add potong */}
+                        <div
+                          onClick={e=>{e.stopPropagation();openCutNumpad(gIdx,pi);}}
+                          style={{
+                            width:"100%",
+                            textAlign:"center",
+                            borderTop:"1px dashed rgba(255,255,255,0.07)",
+                            padding:"3px 2px",
+                            cursor:"pointer",
+                            minHeight:18,
+                            display:"flex",
+                            alignItems:"center",
+                            justifyContent:"center",
+                          }}
+                        >
+                          {cuts.length>0
+                            ?<span style={{fontSize:"clamp(7px,1.8vw,9px)",color:"#f87171",fontFamily:"monospace",lineHeight:1.3}}>
+                              {cuts.map(c=>`(${c})`).join(" ")}
+                            </span>
+                            :<span style={{fontSize:9,color:"rgba(255,255,255,0.1)"}}>✂</span>
+                          }
+                        </div>
+                      </div>
                     </td>
                   );
                 })}
@@ -382,7 +478,7 @@ export default function App(){
 
       <div style={{padding:"12px",borderTop:"1px solid rgba(255,255,255,0.07)",background:"rgba(0,0,0,0.2)"}}>
         <div style={{fontSize:10,color:"#4b5563",textAlign:"center",fontFamily:"monospace"}}>
-          ketuk <span style={{color:"rgba(255,255,255,0.2)"}}>+</span> untuk input nilai · gunakan <span style={{color:"#9ca3af"}}>+/-</span> untuk nilai minus
+          ketuk <span style={{color:"rgba(255,255,255,0.2)"}}>+</span> untuk input nilai · ketuk <span style={{color:"rgba(255,255,255,0.15)"}}>✂</span> untuk input potong
         </div>
       </div>
       <div style={{height:20}}/>
