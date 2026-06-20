@@ -1,10 +1,28 @@
 import { useState, useEffect } from "react";
 
-const INIT_NAMES = ["", "", "", ""];
-function fmt(n){ if(n===0)return"0"; return n>0?`+${n}`:`${n}`; }
+type Phase = "setup" | "game";
+type Cell = number | null;
+interface Game { cells: Cell[]; _isNew?: boolean; }
+interface SavedState {
+  phase?: Phase;
+  names?: string[];
+  playerNames?: string[];
+  games?: Game[];
+}
+interface NumpadTarget { gIdx: number; pIdx: number; }
+interface RekapEntry { loser: string | null; }
 
-function RekapModal({history,onBack,onResetSamePlayer,onResetNewPlayer}){
-  const sanksiCount={};
+const INIT_NAMES: string[] = ["", "", "", ""];
+function fmt(n: number): string { if(n===0)return"0"; return n>0?`+${n}`:`${n}`; }
+
+interface RekapModalProps {
+  history: RekapEntry[];
+  onBack: () => void;
+  onResetSamePlayer: () => void;
+  onResetNewPlayer: () => void;
+}
+function RekapModal({history,onBack,onResetSamePlayer,onResetNewPlayer}: RekapModalProps){
+  const sanksiCount: Record<string, number> = {};
   history.forEach(g=>{ if(g.loser) sanksiCount[g.loser]=(sanksiCount[g.loser]||0)+1; });
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:999}}>
@@ -49,8 +67,15 @@ function RekapModal({history,onBack,onResetSamePlayer,onResetNewPlayer}){
   );
 }
 
-function UndoModal({games,playerNames,onUndo,onClose}){
-  const entries=[];
+interface UndoModalProps {
+  games: Game[];
+  playerNames: string[];
+  onUndo: (gIdx: number, pIdx: number) => void;
+  onClose: () => void;
+}
+interface UndoEntry { gIdx: number; pIdx: number; name: string; val: number; }
+function UndoModal({games,playerNames,onUndo,onClose}: UndoModalProps){
+  const entries: UndoEntry[]=[];
   games.forEach((g,gIdx)=>{
     playerNames.forEach((name,pIdx)=>{
       const val=g.cells[pIdx];
@@ -84,10 +109,15 @@ function UndoModal({games,playerNames,onUndo,onClose}){
   );
 }
 
-function NumpadModal({title,onConfirm,onClose}){
+interface NumpadModalProps {
+  title: string;
+  onConfirm: (val: number) => void;
+  onClose: () => void;
+}
+function NumpadModal({title,onConfirm,onClose}: NumpadModalProps){
   const [display,setDisplay]=useState("");
   const [negative,setNegative]=useState(false);
-  const press=(k)=>{
+  const press=(k: string)=>{
     if(k==="DEL"){setDisplay(d=>d.slice(0,-1));return;}
     if(k==="+/-"){setNegative(n=>!n);return;}
     if(display.length>=5)return;
@@ -131,26 +161,26 @@ function NumpadModal({title,onConfirm,onClose}){
 
 // ── localStorage helpers ──
 const LS_KEY="remi_tracker_v1";
-function loadState(){
+function loadState(): SavedState | null {
   try{
     const raw=localStorage.getItem(LS_KEY);
     if(!raw)return null;
     return JSON.parse(raw);
   }catch(e){return null;}
 }
-function saveState(obj){
+function saveState(obj: SavedState): void {
   try{ localStorage.setItem(LS_KEY,JSON.stringify(obj)); }catch(e){}
 }
 
 export default function App(){
   const saved=loadState();
-  const [phase,setPhase]=useState(saved?.phase||"setup");
-  const [names,setNames]=useState(saved?.names||INIT_NAMES);
-  const [playerNames,setPlayerNames]=useState(saved?.playerNames||[]);
-  const [games,setGames]=useState(saved?.games||[]);
+  const [phase,setPhase]=useState<Phase>(saved?.phase||"setup");
+  const [names,setNames]=useState<string[]>(saved?.names||INIT_NAMES);
+  const [playerNames,setPlayerNames]=useState<string[]>(saved?.playerNames||[]);
+  const [games,setGames]=useState<Game[]>(saved?.games||[]);
   const [showRekap,setShowRekap]=useState(false);
   const [showUndo,setShowUndo]=useState(false);
-  const [numpad,setNumpad]=useState(null);
+  const [numpad,setNumpad]=useState<NumpadTarget | null>(null);
 
   const n=playerNames.length||4;
 
@@ -159,7 +189,7 @@ export default function App(){
     saveState({phase,names,playerNames,games});
   },[phase,names,playerNames,games]);
 
-  const cumulative=(gIdx,pIdx)=>{
+  const cumulative=(gIdx: number, pIdx: number): number =>{
     let t=0;
     for(let i=0;i<=gIdx;i++){
       const v=games[i]?.cells[pIdx];
@@ -167,9 +197,9 @@ export default function App(){
     }
     return t;
   };
-  const lastCumulative=(pIdx)=>games.length===0?0:cumulative(games.length-1,pIdx);
+  const lastCumulative=(pIdx: number): number =>games.length===0?0:cumulative(games.length-1,pIdx);
 
-  const loserAtGame=(gIdx)=>{
+  const loserAtGame=(gIdx: number): string | null =>{
     let anyFilled=false;
     const vals=playerNames.map((_,pi)=>{
       let filled=false;
@@ -180,7 +210,7 @@ export default function App(){
       return filled?cumulative(gIdx,pi):null;
     });
     if(!anyFilled)return null;
-    const nonNull=vals.filter(v=>v!==null);
+    const nonNull=vals.filter((v): v is number=>v!==null);
     if(nonNull.length===0)return null;
     const minVal=Math.min(...nonNull);
     const idx=vals.indexOf(minVal);
@@ -194,9 +224,9 @@ export default function App(){
     setPhase("game");
   };
 
-  const openNumpad=(gIdx,pIdx)=>setNumpad({gIdx,pIdx});
+  const openNumpad=(gIdx: number, pIdx: number)=>setNumpad({gIdx,pIdx});
 
-  const confirmNumpad=(val)=>{
+  const confirmNumpad=(val: number)=>{
     if(!numpad)return;
     const {gIdx,pIdx}=numpad;
     setGames(prev=>{
@@ -210,7 +240,7 @@ export default function App(){
     setNumpad(null);
   };
 
-  const undoCell=(gIdx,pIdx)=>{
+  const undoCell=(gIdx: number, pIdx: number)=>{
     setGames(prev=>{
       const next=[...prev];
       const g={...next[gIdx],cells:[...next[gIdx].cells]};
@@ -223,13 +253,13 @@ export default function App(){
 
   const handleReset=()=>setShowRekap(true);
   const confirmResetSamePlayer=()=>{
-    const freshGames=[];
+    const freshGames: Game[]=[];
     setGames(freshGames);
     saveState({phase,names,playerNames,games:freshGames});
     setShowRekap(false);
   };
   const confirmResetNewPlayer=()=>{
-    const freshGames=[];
+    const freshGames: Game[]=[];
     const freshNames=INIT_NAMES;
     setGames(freshGames);
     setPlayerNames([]);
@@ -246,7 +276,7 @@ export default function App(){
     return vals.indexOf(m);
   })();
 
-  const displayRows=games.length>0
+  const displayRows: Game[]=games.length>0
     ?(games[games.length-1].cells.every(c=>c===null)
       ?games
       :[...games,{cells:Array(n).fill(null),_isNew:true}])
@@ -376,8 +406,8 @@ export default function App(){
                       {isEmpty
                         ?<span style={{color:"rgba(255,255,255,0.15)",fontSize:18}}>+</span>
                         :<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
-                          <span style={{fontFamily:"monospace",fontSize:"clamp(12px,3.5vw,16px)",fontWeight:900,color:cumVal>0?"#4ade80":cumVal<0?"#f87171":"#9ca3af"}}>
-                            {fmt(cumVal)}
+                          <span style={{fontFamily:"monospace",fontSize:"clamp(12px,3.5vw,16px)",fontWeight:900,color:(cumVal??0)>0?"#4ade80":(cumVal??0)<0?"#f87171":"#9ca3af"}}>
+                            {fmt(cumVal??0)}
                           </span>
                           {isSanksi&&<span style={{fontSize:12,animation:"blink 1.3s infinite"}}>🍶</span>}
                         </div>
